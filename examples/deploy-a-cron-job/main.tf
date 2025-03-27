@@ -21,7 +21,7 @@ resource "qovery_cluster" "my_cluster" {
   organization_id   = var.qovery_organization_id
   credentials_id    = qovery_aws_credentials.my_aws_creds.id
   name              = "Demo cluster"
-  description       = "Terraform demo cluster"
+  description       = "Subham Demo Cluster"
   cloud_provider    = "AWS"
   region            = "us-east-2"
   instance_type     = "t3a.medium"
