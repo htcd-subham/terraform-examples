@@ -24,9 +24,9 @@ resource "qovery_cluster" "my_cluster" {
   description       = "Terraform demo cluster"
   cloud_provider    = "AWS"
   region            = "us-east-2"
-  instance_type     = "t3a.medium"
-  min_running_nodes = 3
-  max_running_nodes = 4
+  instance_type     = "ta.medium"
+  min_running_nodes = 1
+  max_running_nodes = 2
 }
 
 resource "qovery_project" "my_project" {
