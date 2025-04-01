@@ -28,10 +28,10 @@ variable "cloudflare_zone_id" {
 
 variable "cloudflare_record_name" {
   type = string
-  default = "foobar" # TO CHANGE
+  default = "updated-value-for-record-name" # New required value
 }
 
 variable "qovery_custom_domain" {
   type = string
-  default = "foobar.meta.cloud" # TO CHANGE
+  default = "updated-value-for-custom-domain" # New required value
 }
