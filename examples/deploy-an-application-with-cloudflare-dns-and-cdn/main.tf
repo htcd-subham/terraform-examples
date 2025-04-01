@@ -52,68 +52,55 @@ resource "qovery_environment" "production" {
 # create and deploy app with custom domain
 resource "qovery_application" "backend" {
   environment_id = qovery_environment.production.id
-  name           = "backend"
+  name           = "url-shortener-backend"  # More descriptive name
   cpu            = 500
   memory         = 256
+  
   git_repository = {
     url       = "https://github.com/evoxmusic/ShortMe-URL-Shortener.git"
     branch    = "main"
     root_path = "/"
   }
+  
   build_mode            = "DOCKER"
   dockerfile_path       = "Dockerfile"
   min_running_instances = 1
   max_running_instances = 1
+  
   custom_domains = [
     {
       domain = var.qovery_custom_domain
     }
   ]
+  
   ports = [
     {
-      internal_port       = 5555
+      internal_port       = local.app_port
       external_port       = 443
       protocol            = "HTTP"
       publicly_accessible = true
       is_default          = true
     }
   ]
+  
   environment_variables = [
     {
       key   = "DEBUG"
       value = "false"
+    },
+    {
+      key   = "APP_ENV"
+      value = "production"
     }
   ]
+  
   healthchecks = {
-    readiness_probe = {
-      type = {
-        http = {
-          scheme = "HTTP"
-          port   = 5555
-          path   = "/"
-        }
-      }
-      initial_delay_seconds = 30
-      period_seconds        = 10
-      timeout_seconds       = 10
-      success_threshold     = 1
-      failure_threshold     = 3
-    }
-    liveness_probe = {
-      type = {
-        http = {
-          scheme = "HTTP"
-          port   = 5555
-          path   = "/"
-        }
-      }
-      initial_delay_seconds = 30
-      period_seconds        = 10
-      timeout_seconds       = 10
-      success_threshold     = 1
-      failure_threshold     = 3
-    }
+    readiness_probe = local.health_check_config
+    liveness_probe  = local.health_check_config
   }
+  
+  auto_preview = false
+  auto_deploy  = true
 }
 
 resource "qovery_deployment" "prod_deployment" {
