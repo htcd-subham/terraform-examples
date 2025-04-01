@@ -42,60 +42,57 @@ resource "qovery_environment" "production" {
 }
 
 # create and deploy cron job
-resource "qovery_job" "cron-job" {
+resource "qovery_application" "backend" {
   environment_id = qovery_environment.production.id
-  name           = "cron-job"
-
-  cpu    = 100
-  memory = 350
-
-  max_duration_seconds = 60
-  max_nb_restart       = 1
-
-  port = 4000
-
-  auto_preview = false
-
-  schedule = {
-    cronjob = {
-      schedule = "*/2 * * * *" # every 2 minutes
-      command = {
-        entrypoint = ""
-        arguments = []
-      }
-    }
+  name           = "url-shortener-backend"  # More descriptive name
+  cpu            = 500
+  memory         = 256
+  
+  git_repository = {
+    url       = "https://github.com/evoxmusic/ShortMe-URL-Shortener.git"
+    branch    = "main"
+    root_path = "/"
   }
-
-  source = {
-    docker = {
-      dockerfile_path = "Dockerfile"
-      git_repository = {
-        url       = "https://github.com/Qovery/terraform-provider-testing.git"
-        branch    = "job-echo-n-seconds"
-        root_path = "/"
-      }
+  
+  build_mode            = "DOCKER"
+  dockerfile_path       = "Dockerfile"
+  min_running_instances = 1
+  max_running_instances = 1
+  
+  custom_domains = [
+    {
+      domain = var.qovery_custom_domain
     }
-  }
-
-  healthchecks = {}
-
+  ]
+  
+  ports = [
+    {
+      internal_port       = local.app_port
+      external_port       = 443
+      protocol            = "HTTP"
+      publicly_accessible = true
+      is_default          = true
+    }
+  ]
+  
   environment_variables = [
     {
-      key   = "PORT"
-      value = "4000"
+      key   = "DEBUG"
+      value = "false"
     },
     {
-      key   = "DURATION_SECONDS"
-      value = "15"
-    },
+      key   = "APP_ENV"
+      value = "production"
+    }
   ]
-
-  secrets = [
-    {
-      key   = "JOB_SECRET"
-      value = "my job secret"
-    },
-  ]
+  
+  healthchecks = {
+    readiness_probe = local.health_check_config
+    liveness_probe  = local.health_check_config
+  }
+  
+  auto_preview = false
+  auto_deploy  = true
 }
 
 resource "qovery_deployment" "prod_deployment" {
