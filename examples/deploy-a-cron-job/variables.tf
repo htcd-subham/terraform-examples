@@ -1,3 +1,4 @@
+```
 variable "qovery_organization_id" {
   type    = string
 }
@@ -13,3 +14,8 @@ variable "aws_access_key_id" {
 variable "aws_secret_access_key" {
   type = string
 }
+
+variable "qovery_custom_domain" {
+  type = string
+}
+```
