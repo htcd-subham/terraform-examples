@@ -1,131 +1,78 @@
+```
 terraform {
   required_providers {
-    qovery = {
-      source = "qovery/qovery"
-    }
-    cloudflare = {
-      source = "cloudflare/cloudflare"
+    aws = {
+      source  = "hashicorp/aws"
+      version = "~> 4.0"
     }
   }
 }
 
-provider "qovery" {
-  token = var.qovery_access_token
+provider "aws" {
+  region = "us-east-1"
 }
 
-provider "cloudflare" {
-  email     = var.cloudflare_email
-  api_token = var.cloudflare_api_token
+variable "security_group_id" {
+  description = "The ID of the security group to remediate"
+  type        = string
+  default     = "sg-0a3d5f08adf1c2e5a"
 }
 
-resource "qovery_aws_credentials" "my_aws_creds" {
-  organization_id   = var.qovery_organization_id
-  name              = "My AWS Creds"
-  access_key_id     = var.aws_access_key_id
-  secret_access_key = var.aws_secret_access_key
+variable "allowed_ports" {
+  description = "List of allowed ports"
+  type        = list(number)
+  default     = [80, 443] # Example: Allow only HTTP and HTTPS
 }
 
-resource "qovery_cluster" "my_cluster" {
-  organization_id   = var.qovery_organization_id
-  credentials_id    = qovery_aws_credentials.my_aws_creds.id
-  name              = "Demo cluster"
-  description       = "Terraform demo cluster"
-  cloud_provider    = "AWS"
-  region            = "us-east-2"
-  instance_type     = "t3a.medium"
-  min_running_nodes = 3
-  max_running_nodes = 4
+variable "allowed_cidr_blocks" {
+  description = "List of allowed CIDR blocks"
+  type        = list(string)
+  default     = ["10.0.0.0/8", "172.16.0.0/12", "192.168.0.0/16"] # Example: Allow only private IP ranges
 }
 
-resource "qovery_project" "my_project" {
-  organization_id = var.qovery_organization_id
-  name            = "URL Shortener"
+# Data source to fetch existing security group
+data "aws_security_group" "target_sg" {
+  id = var.security_group_id
 }
 
-resource "qovery_environment" "production" {
-  project_id = qovery_project.my_project.id
-  name       = "production"
-  mode       = "PRODUCTION"
-  cluster_id = qovery_cluster.my_cluster.id
-}
+# Remove all existing ingress rules
+resource "aws_security_group_rule" "remove_all_rules" {
+  count = length(data.aws_security_group.target_sg.ingress)
 
-# create and deploy app with custom domain
-resource "qovery_application" "backend" {
-  environment_id = qovery_environment.production.id
-  name           = "backend"
-  cpu            = 500
-  memory         = 256
-  git_repository = {
-    url       = "https://github.com/evoxmusic/ShortMe-URL-Shortener.git"
-    branch    = "main"
-    root_path = "/"
-  }
-  build_mode            = "DOCKER"
-  dockerfile_path       = "Dockerfile"
-  min_running_instances = 1
-  max_running_instances = 1
-  custom_domains = [
-    {
-      domain = var.qovery_custom_domain
-    }
-  ]
-  ports = [
-    {
-      internal_port       = 5555
-      external_port       = 443
-      protocol            = "HTTP"
-      publicly_accessible = true
-      is_default          = true
-    }
-  ]
-  environment_variables = [
-    {
-      key   = "DEBUG"
-      value = "false"
-    }
-  ]
-  healthchecks = {
-    readiness_probe = {
-      type = {
-        http = {
-          scheme = "HTTP"
-          port   = 5555
-          path   = "/"
-        }
-      }
-      initial_delay_seconds = 30
-      period_seconds        = 10
-      timeout_seconds       = 10
-      success_threshold     = 1
-      failure_threshold     = 3
-    }
-    liveness_probe = {
-      type = {
-        http = {
-          scheme = "HTTP"
-          port   = 5555
-          path   = "/"
-        }
-      }
-      initial_delay_seconds = 30
-      period_seconds        = 10
-      timeout_seconds       = 10
-      success_threshold     = 1
-      failure_threshold     = 3
-    }
+  security_group_id = var.security_group_id
+  type              = "ingress"
+
+  from_port   = data.aws_security_group.target_sg.ingress[count.index].from_port
+  to_port     = data.aws_security_group.target_sg.ingress[count.index].to_port
+  protocol    = data.aws_security_group.target_sg.ingress[count.index].protocol
+  cidr_blocks = data.aws_security_group.target_sg.ingress[count.index].cidr_blocks
+
+  lifecycle {
+    create_before_destroy = true
   }
 }
 
-resource "qovery_deployment" "prod_deployment" {
-  environment_id = qovery_environment.production.id
-  desired_state  = "RUNNING"
+# Add new ingress rules for allowed ports and CIDR blocks
+resource "aws_security_group_rule" "allow_specific_ports" {
+  count = length(var.allowed_ports) * length(var.allowed_cidr_blocks)
+
+  security_group_id = var.security_group_id
+  type              = "ingress"
+
+  from_port   = var.allowed_ports[floor(count.index / length(var.allowed_cidr_blocks))]
+  to_port     = var.allowed_ports[floor(count.index / length(var.allowed_cidr_blocks))]
+  protocol    = "tcp"
+  cidr_blocks = [var.allowed_cidr_blocks[count.index % length(var.allowed_cidr_blocks)]]
+
+  description = "Allow inbound traffic on port ${var.allowed_ports[floor(count.index / length(var.allowed_cidr_blocks))]} from ${var.allowed_cidr_blocks[count.index % length(var.allowed_cidr_blocks)]}"
+
+  depends_on = [aws_security_group_rule.remove_all_rules]
 }
 
-# create custom domain record
-resource "cloudflare_record" "foobar" {
-  zone_id = var.cloudflare_zone_id
-  name    = var.cloudflare_record_name
-  value = one(qovery_application.backend.custom_domains[*].validation_domain)
-  type    = "CNAME"
-  ttl     = 3600
+# Update tags for auditing
+resource "aws_ec2_tag" "security_group_tag" {
+  resource_id = var.security_group_id
+  key         = "LastRemediated"
+  value       = timestamp()
 }
+```

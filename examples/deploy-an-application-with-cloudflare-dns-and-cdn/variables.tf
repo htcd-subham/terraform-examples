@@ -1,3 +1,4 @@
+```
 variable "qovery_organization_id" {
   type    = string
 }
@@ -28,10 +29,11 @@ variable "cloudflare_zone_id" {
 
 variable "cloudflare_record_name" {
   type = string
-  default = "foobar" # TO CHANGE
+  default = "new-foobar" # Updated
 }
 
 variable "qovery_custom_domain" {
   type = string
-  default = "foobar.meta.cloud" # TO CHANGE
+  default = "new-foobar.meta.cloud" # Updated
 }
+```
