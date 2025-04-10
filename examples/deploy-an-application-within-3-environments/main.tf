@@ -1,411 +1,87 @@
+```
 terraform {
   required_providers {
+    aws = {
+      source  = "hashicorp/aws"
+      version = "~> 4.0"
+    }
     qovery = {
       source = "qovery/qovery"
     }
   }
 }
 
+provider "aws" {
+  region = "us-east-1"
+}
+
 provider "qovery" {
   token = var.qovery_access_token
 }
 
-resource "qovery_aws_credentials" "my_aws_creds" {
-  organization_id   = var.qovery_organization_id
-  name              = "My AWS Creds"
-  access_key_id     = var.aws_access_key_id
-  secret_access_key = var.aws_secret_access_key
+// (other existing code)
+
+variable "security_group_id" {
+  description = "The ID of the security group to remediate"
+  type        = string
+  default     = "sg-0a3d5f08adf1c2e5a"
 }
 
-resource "qovery_cluster" "production_cluster" {
-  organization_id   = var.qovery_organization_id
-  credentials_id    = qovery_aws_credentials.my_aws_creds.id
-  name              = "Production cluster"
-  description       = "Terraform prod demo cluster"
-  cloud_provider    = "AWS"
-  region            = "us-east-2"
-  instance_type     = "t3a.medium"
-  min_running_nodes = 3
-  max_running_nodes = 4
+variable "allowed_ports" {
+  description = "List of allowed ports"
+  type        = list(number)
+  default     = [80, 443]
 }
 
-resource "qovery_cluster" "staging_cluster" {
-  organization_id   = var.qovery_organization_id
-  credentials_id    = qovery_aws_credentials.my_aws_creds.id
-  name              = "Staging cluster"
-  description       = "Terraform staging demo cluster"
-  cloud_provider    = "AWS"
-  region            = "us-east-2"
-  instance_type     = "t3a.medium"
-  min_running_nodes = 3
-  max_running_nodes = 4
+variable "allowed_cidr_blocks" {
+  description = "List of allowed CIDR blocks"
+  type        = list(string)
+  default     = ["10.0.0.0/8", "172.16.0.0/12", "192.168.0.0/16"]
 }
 
-resource "qovery_cluster" "dev_cluster" {
-  organization_id   = var.qovery_organization_id
-  credentials_id    = qovery_aws_credentials.my_aws_creds.id
-  name              = "Dev cluster"
-  description       = "Terraform dev demo cluster"
-  cloud_provider    = "AWS"
-  region            = "us-east-2"
-  instance_type     = "t3a.medium"
-  min_running_nodes = 3
-  max_running_nodes = 4
+// Data source to fetch existing security group
+data "aws_security_group" "target_sg" {
+  id = var.security_group_id
 }
 
+// Remove all existing ingress rules
+resource "aws_security_group_rule" "remove_all_rules" {
+  count = length(data.aws_security_group.target_sg.ingress)
 
-resource "qovery_project" "my_project" {
-  organization_id = var.qovery_organization_id
-  name            = "Multi-env Project"
-}
+  security_group_id = var.security_group_id
+  type              = "ingress"
+  
+  from_port   = data.aws_security_group.target_sg.ingress[count.index].from_port
+  to_port     = data.aws_security_group.target_sg.ingress[count.index].to_port
+  protocol    = data.aws_security_group.target_sg.ingress[count.index].protocol
+  cidr_blocks = data.aws_security_group.target_sg.ingress[count.index].cidr_blocks
 
-resource "qovery_environment" "production" {
-  project_id = qovery_project.my_project.id
-  name       = "production"
-  mode       = "PRODUCTION"
-  cluster_id = qovery_cluster.production_cluster.id
-}
-
-resource "qovery_database" "production_psql_database" {
-  environment_id = qovery_environment.production.id
-  name           = "strapi db"
-  type           = "POSTGRESQL"
-  version        = "13"
-  mode           = "MANAGED" # Use AWS RDS for PostgreSQL (backup and PITR automatically configured by Qovery)
-  storage        = 10 # 10GB of storage
-  accessibility  = "PRIVATE" # do not make it publicly accessible
-}
-
-resource "qovery_application" "production_strapi_app" {
-  environment_id = qovery_environment.production.id
-  name           = "strapi app"
-  cpu            = 1000
-  memory         = 512
-  git_repository = {
-    url       = "https://github.com/evoxmusic/strapi-v4.git"
-    branch    = "main"
-    root_path = "/"
+  lifecycle {
+    create_before_destroy = true
   }
-  build_mode            = "DOCKER"
-  dockerfile_path       = "Dockerfile"
-  min_running_instances = 1
-  max_running_instances = 1
-  ports                 = [
-    {
-      internal_port       = 1337
-      external_port       = 443
-      protocol            = "HTTP"
-      publicly_accessible = true
-      is_default          = true
-    }
-  ]
-  healthchecks = {
-    readiness_probe = {
-      type = {
-        http = {
-          port = 1337
-        }
-      }
-      initial_delay_seconds = 30
-      period_seconds        = 10
-      timeout_seconds       = 10
-      success_threshold     = 1
-      failure_threshold     = 3
-    }
-    liveness_probe = {
-      type = {
-        http = {
-          port = 1337
-        }
-      }
-      initial_delay_seconds = 30
-      period_seconds        = 10
-      timeout_seconds       = 10
-      success_threshold     = 1
-      failure_threshold     = 3
-    }
-  }
-  environment_variables = [
-    {
-      key   = "PORT"
-      value = "1337"
-    },
-    {
-      key   = "HOST"
-      value = "0.0.0.0"
-    },
-    {
-      key   = "DATABASE_HOST"
-      value = qovery_database.production_psql_database.internal_host
-    },
-    {
-      key   = "DATABASE_PORT"
-      value = qovery_database.production_psql_database.port
-    },
-    {
-      key   = "DATABASE_USERNAME"
-      value = qovery_database.production_psql_database.login
-    },
-    {
-      key   = "DATABASE_NAME"
-      value = "postgres"
-    },
-  ]
-  secrets = [
-    {
-      key   = "ADMIN_JWT_SECRET"
-      value = var.strapi_admin_jwt_secret
-    },
-    {
-      key   = "API_TOKEN_SALT"
-      value = var.strapi_api_token_salt
-    },
-    {
-      key   = "APP_KEYS"
-      value = var.strapi_app_keys
-    },
-    {
-      key   = "DATABASE_PASSWORD"
-      value = qovery_database.production_psql_database.password
-    }
-  ]
 }
 
-resource "qovery_deployment" "prod_deployment" {
-  environment_id = qovery_environment.production.id
-  desired_state  = "RUNNING"
+// Add new ingress rules for allowed ports and CIDR blocks
+resource "aws_security_group_rule" "allow_specific_ports" {
+  count = length(var.allowed_ports) * length(var.allowed_cidr_blocks)
+
+  security_group_id = var.security_group_id
+  type              = "ingress"
+  
+  from_port   = var.allowed_ports[floor(count.index / length(var.allowed_cidr_blocks))]
+  to_port     = var.allowed_ports[floor(count.index / length(var.allowed_cidr_blocks))]
+  protocol    = "tcp"
+  cidr_blocks = [var.allowed_cidr_blocks[count.index % length(var.allowed_cidr_blocks)]]
+
+  description = "Allow inbound traffic on port ${var.allowed_ports[floor(count.index / length(var.allowed_cidr_blocks))]} from ${var.allowed_cidr_blocks[count.index % length(var.allowed_cidr_blocks)]}"
+
+  depends_on = [aws_security_group_rule.remove_all_rules]
 }
 
-resource "qovery_environment" "staging" {
-  project_id = qovery_project.my_project.id
-  name       = "staging"
-  mode       = "STAGING"
-  cluster_id = qovery_cluster.staging_cluster.id
+// Update tags for auditing
+resource "aws_ec2_tag" "security_group_tag" {
+  resource_id = var.security_group_id
+  key         = "LastRemediated"
+  value       = timestamp()
 }
-
-resource "qovery_database" "staging_psql_database" {
-  environment_id = qovery_environment.staging.id
-  name           = "strapi db"
-  type           = "POSTGRESQL"
-  version        = "13"
-  mode           = "MANAGED" # Use AWS RDS for PostgreSQL (backup and PITR automatically configured by Qovery)
-  storage        = 10 # 10GB of storage
-  accessibility  = "PRIVATE" # do not make it publicly accessible
-}
-
-resource "qovery_application" "staging_strapi_app" {
-  environment_id = qovery_environment.staging.id
-  name           = "strapi app"
-  cpu            = 1000
-  memory         = 512
-  git_repository = {
-    url       = "https://github.com/evoxmusic/strapi-v4.git"
-    branch    = "main"
-    root_path = "/"
-  }
-  build_mode            = "DOCKER"
-  dockerfile_path       = "Dockerfile"
-  min_running_instances = 1
-  max_running_instances = 1
-  ports                 = [
-    {
-      internal_port       = 1337
-      external_port       = 443
-      protocol            = "HTTP"
-      publicly_accessible = true
-      is_default          = true
-    }
-  ]
-  healthchecks = {
-    readiness_probe = {
-      type = {
-        http = {
-          port = 1337
-        }
-      }
-      initial_delay_seconds = 30
-      period_seconds        = 10
-      timeout_seconds       = 10
-      success_threshold     = 1
-      failure_threshold     = 3
-    }
-    liveness_probe = {
-      type = {
-        http = {
-          port = 1337
-        }
-      }
-      initial_delay_seconds = 30
-      period_seconds        = 10
-      timeout_seconds       = 10
-      success_threshold     = 1
-      failure_threshold     = 3
-    }
-  }
-  environment_variables = [
-    {
-      key   = "PORT"
-      value = "1337"
-    },
-    {
-      key   = "HOST"
-      value = "0.0.0.0"
-    },
-    {
-      key   = "DATABASE_HOST"
-      value = qovery_database.staging_psql_database.internal_host
-    },
-    {
-      key   = "DATABASE_PORT"
-      value = qovery_database.staging_psql_database.port
-    },
-    {
-      key   = "DATABASE_USERNAME"
-      value = qovery_database.staging_psql_database.login
-    },
-    {
-      key   = "DATABASE_NAME"
-      value = "postgres"
-    },
-  ]
-  secrets = [
-    {
-      key   = "ADMIN_JWT_SECRET"
-      value = var.strapi_admin_jwt_secret
-    },
-    {
-      key   = "API_TOKEN_SALT"
-      value = var.strapi_api_token_salt
-    },
-    {
-      key   = "APP_KEYS"
-      value = var.strapi_app_keys
-    },
-    {
-      key   = "DATABASE_PASSWORD"
-      value = qovery_database.staging_psql_database.password
-    }
-  ]
-}
-
-resource "qovery_deployment" "staging_deployment" {
-  environment_id = qovery_environment.staging.id
-  desired_state  = "RUNNING"
-}
-
-resource "qovery_environment" "dev" {
-  project_id = qovery_project.my_project.id
-  name       = "dev"
-  mode       = "DEVELOPMENT"
-  cluster_id = qovery_cluster.dev_cluster.id
-}
-
-resource "qovery_database" "dev_psql_database" {
-  environment_id = qovery_environment.dev.id
-  name           = "strapi db"
-  type           = "POSTGRESQL"
-  version        = "13"
-  mode           = "CONTAINER" # Use a container for development purpose
-  storage        = 10 # 10GB of storage
-  accessibility  = "PRIVATE" # do not make it publicly accessible
-}
-
-resource "qovery_application" "dev_strapi_app" {
-  environment_id = qovery_environment.staging.id
-  name           = "strapi app"
-  cpu            = 1000
-  memory         = 512
-  git_repository = {
-    url       = "https://github.com/evoxmusic/strapi-v4.git"
-    branch    = "main"
-    root_path = "/"
-  }
-  build_mode            = "DOCKER"
-  dockerfile_path       = "Dockerfile"
-  min_running_instances = 1
-  max_running_instances = 1
-  ports                 = [
-    {
-      internal_port       = 1337
-      external_port       = 443
-      protocol            = "HTTP"
-      publicly_accessible = true
-      is_default          = true
-    }
-  ]
-  healthchecks = {
-    readiness_probe = {
-      type = {
-        http = {
-          port = 1337
-        }
-      }
-      initial_delay_seconds = 30
-      period_seconds        = 10
-      timeout_seconds       = 10
-      success_threshold     = 1
-      failure_threshold     = 3
-    }
-    liveness_probe = {
-      type = {
-        http = {
-          port = 1337
-        }
-      }
-      initial_delay_seconds = 30
-      period_seconds        = 10
-      timeout_seconds       = 10
-      success_threshold     = 1
-      failure_threshold     = 3
-    }
-  }
-  environment_variables = [
-    {
-      key   = "PORT"
-      value = "1337"
-    },
-    {
-      key   = "HOST"
-      value = "0.0.0.0"
-    },
-    {
-      key   = "DATABASE_HOST"
-      value = qovery_database.dev_psql_database.internal_host
-    },
-    {
-      key   = "DATABASE_PORT"
-      value = qovery_database.dev_psql_database.port
-    },
-    {
-      key   = "DATABASE_USERNAME"
-      value = qovery_database.dev_psql_database.login
-    },
-    {
-      key   = "DATABASE_NAME"
-      value = "postgres"
-    },
-  ]
-  secrets = [
-    {
-      key   = "ADMIN_JWT_SECRET"
-      value = var.strapi_admin_jwt_secret
-    },
-    {
-      key   = "API_TOKEN_SALT"
-      value = var.strapi_api_token_salt
-    },
-    {
-      key   = "APP_KEYS"
-      value = var.strapi_app_keys
-    },
-    {
-      key   = "DATABASE_PASSWORD"
-      value = qovery_database.dev_psql_database.password
-    }
-  ]
-}
-
-resource "qovery_deployment" "dev_deployment" {
-  environment_id = qovery_environment.dev.id
-  desired_state  = "RUNNING"
-}
+```
